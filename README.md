@@ -6,5 +6,5 @@ Arhitectura hardware este prezentată mai jos:
 
 
 
-!\[]("C:\\Users\\HP\\Pictures\\Arhitectura\_hardware\_proiect\_SDSI.jpg")
+
 
