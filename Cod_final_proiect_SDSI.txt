@@ -1,0 +1,452 @@
+#include <Wire.h>
+#include <Keypad.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);//Inițializarea ecranului lcd
+
+const byte numRows = 4; //Numarul de randuri pentru tastatura
+const byte numCols = 4; //Numarul de coloane pentru tastatura
+
+char keyMap[numRows][numCols] = //Setarea tastelor
+{
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'},
+};
+
+byte rowPins[numRows] = {9, 8, 7, 6}; // Setarea pinilor pentru randuri
+byte colPins[numCols] = {5, 4, 3, 2}; // Setarea pinilor pentru coloane
+
+Keypad myKeypad = Keypad(makeKeymap(keyMap), rowPins, colPins, numRows, numCols);
+
+const byte PIR_PIN = 12; //Pinul D12 pe placa arduino pentru senzorul PIR
+const byte BUZZER_PIN = 13; //Pinul D13 pe placa arduino pentru Piezo(BUZZER)
+const byte LED_PIN = 10; // Pinul D10 pe placa arduino pentru led-ul roșu
+
+char code[16]; //codul tastat la pornirea sistemului pentru a fi salvat
+char retypedCode[16]; //cod care este reintrodus pentru deblocare sau ștergere
+char savedCode[16]; //cod care se salvează după creare
+byte length = 0; //lungimea codului tastat
+byte retypedCodeLength = 0; //lungimea codului reintrodus
+byte savedCodeLength = 0; //lungimea codului salvat
+
+int lastState = LOW; //ultima stare în detectarea unei mișcări
+
+bool locked = false; //sistem blocat inițializat implicit pe false
+bool unlocked = true; //sistem deblocat inițializat implicit pe true
+bool deleteSavedCode = false; //variabila care primiește valoarea true la ștergerea codului salvat
+bool nullSavedCode = true; //variabilă care primește valoarea false la salvarea codului(la pornirea sistemului este true)
+bool createdCode = false; // variabilă care verifică crearea codului
+
+void setup()
+{ 
+  pinMode(PIR_PIN, INPUT);//configurarea pinului senzorului PIR ca INPUT
+  pinMode(BUZZER_PIN, OUTPUT);//configurarea pinului dispozitivului Piezo ca OUTPUT 
+  pinMode(LED_PIN, OUTPUT);//configurarea led-ului roșu ca OUTPUT
+
+  digitalWrite(BUZZER_PIN, LOW); //Dispozitivul Piezo(BUZZER) este oprit inițial
+  digitalWrite(LED_PIN, LOW); //Led-ul roșu este oprit iniția 
+  
+  lcd.init(); //Inițializarea ecranului LCD
+  lcd.backlight(); //Aprinderea ecranului LCD
+  lcd.print("Cod nou: "); //ecranul lcd afișaza mesajul Cod nou:  
+}
+
+void loop()
+{
+  char key = myKeypad.getKey(); //Declararea variabilei key
+  
+  apasareTasta(key);
+  
+  int currentState = digitalRead(PIR_PIN); // starea curentă primește valori citite de la senzorul PIR
+  
+  if(locked == true && unlocked == false){ // Se verifică dacă sistemul este blocat
+      detectareMiscareSistemBlocat(currentState);
+      lastState = currentState;
+  }
+  
+  if(locked == false && unlocked == true && deleteSavedCode == true || deleteSavedCode == false){ //Se verifică dacă sistemul este deblocat
+    detectareMiscareSistemDeblocat(currentState);
+    lastState = currentState; //Ultima stare ia valoarea stării curente de mișcare
+  }
+}
+
+void stareDeDeblocare(){
+  tone(BUZZER_PIN, 2000);
+  delay(500);
+  noTone(BUZZER_PIN);
+  for(int i = 0; i < 16; i++){
+    retypedCode[i] = '\0';
+  }
+  retypedCodeLength = 0;
+  lcd.clear();
+  lcd.print("Deblocare sistem!");
+  lcd.setCursor(0, 1);
+}
+
+void stareDeStergereCod(char retypedCode[16], int retypedCodeLength){
+   tone(BUZZER_PIN, 2000);//Buzzer-ul sună timp de jumătate de secundă
+   delay(500);
+   noTone(BUZZER_PIN);
+   deleteSavedCode = true; //Se activează ștergerea codului
+   for(int i = 0; i < 16; i++){
+     retypedCode[i] = '\0';
+   } 
+   retypedCodeLength = 0;// Se golește codul reintrodus
+   lcd.clear();
+   lcd.print("Stergere cod!");
+   lcd.setCursor(0, 1);
+}
+
+void detectareMiscareSistemBlocat(int currentState){ //Functie pentru detectarea unei miscari cand sistemul este blocat
+   if (currentState == HIGH && lastState == LOW) { //Se verifică dacă se detectează mișcare
+          lcd.clear();
+          lcd.print("Miscare");
+          lcd.setCursor(0, 1);
+          lcd.print("detectata!");
+          digitalWrite(LED_PIN, HIGH);
+        
+          tone(BUZZER_PIN, 1000);
+          delay(1000);
+          noTone(BUZZER_PIN);
+   }
+      
+   if (currentState == LOW && lastState == HIGH) { //Când nu mai este detectată mișcare
+          lcd.clear();
+          lcd.print("Nu exista");
+          lcd.setCursor(0, 1);
+          lcd.print("miscare!");
+          digitalWrite(LED_PIN, LOW);
+   }
+  
+}
+
+void detectareMiscareSistemDeblocat(int currentState){ //Functie pentru detectarea miscarii cand sistemul este deblocat
+      if (currentState == HIGH && lastState == LOW) {//Se verifică dacă se detectează mișcare
+          
+          digitalWrite(LED_PIN, HIGH);
+          alarmaDe10Sec();
+          
+      }
+      
+      if (currentState == LOW && lastState == HIGH) { //Când nu mai este detectată mișcare
+          noTone(BUZZER_PIN);
+          lcd.clear();
+          digitalWrite(LED_PIN, LOW);
+        
+          if(nullSavedCode == true){
+            while(length > 0)//Stergere cod
+            {
+               length--;
+               code[length] = '\0';
+            }
+            lcd.print("Cod nou: ");
+          }
+         
+          if(nullSavedCode == false){
+            lcd.print("Introdu codul");
+            lcd.setCursor(0, 1);
+            lcd.print("salvat:");
+          }
+      }
+}
+
+void blocareSistem(){ //Functie pentru blocarea sistemului
+   if(nullSavedCode == false){// se verifică daca codul a fost salvat 
+        bool matchingCodes = true;
+        
+        for(int i = 0; i < length; i++)
+        {
+          if(savedCode[i] != code[i])
+            matchingCodes = false;
+        }
+        
+        if(matchingCodes == true && savedCodeLength == length)// se verifică dacă codul introdus este egal cu codul salvat
+        {
+          lcd.clear();
+          lcd.print("Sistem blocat!");
+          locked = true;
+          unlocked = false;
+
+        }
+        if(matchingCodes == false || savedCodeLength != length){ // se verifică dacă codul introdus nu este egal cu codul salvat
+          
+          while(length > 0)  //Se șterge codul introdus
+          {
+            length--;
+            code[length] = '\0';
+          }
+          
+          lcd.clear();
+          lcd.print("Codul nu se"); //Se afișază pe ecranul lcd
+          lcd.setCursor(0, 1);
+          lcd.print("potriveste!");
+          delay(2000);
+          lcd.clear();
+          lcd.print("Introdu codul");
+          lcd.setCursor(0, 1);
+          lcd.print("salvat:");
+          locked = false; //sistemul nu este blocat  
+          unlocked = true; //sistemul este deblocat
+          
+        }
+      }
+      
+      if(nullSavedCode == true){ //se verifică dacă codul nu a fost salvat
+        while(savedCodeLength < length){ //se salvează codul
+          savedCode[savedCodeLength] = code[savedCodeLength];
+          savedCodeLength++;
+        }  
+        
+        nullSavedCode = false; //codul este salvat
+        locked = true; //sistemul se blochează
+        unlocked = false; //sistemul nu mai este deblocat
+        lcd.clear(); //se afișază pe ecranul lcd
+        lcd.print("Sistem blocat!");
+      }
+}
+
+void deblocareSistem(char key){ //Functie pentru deblocarea sistemului
+  if(retypedCodeLength < 16){ // Se introduce codul pentru deblocare
+    retypedCode[retypedCodeLength] = key;
+    retypedCodeLength++;
+    lcd.print('*');  
+    tone(BUZZER_PIN, 2000);
+    delay(500);
+    noTone(BUZZER_PIN);
+  }
+}
+
+void introducereCodPentruStergere(char key){//Functie pentru introducerea codului salvat pentru stergere
+  retypedCode[retypedCodeLength] = key;
+  retypedCodeLength++;
+  lcd.print('*'); 
+  tone(BUZZER_PIN, 2000);
+  delay(500);
+  noTone(BUZZER_PIN);
+}
+
+void stergereCod(){ //Functie de stergere cod salvat
+  while(length > 0) // se șterge codul introdus
+  {
+    length--;
+    code[length] = '\0';
+  }
+          
+  while(savedCodeLength > 0) //Stergerea codului salvat
+  {
+    savedCodeLength--;
+    savedCode[savedCodeLength] = '\0';
+  }
+          
+  nullSavedCode = true; 
+  lcd.clear();
+  lcd.print("Cod sters!");
+  delay(2000);
+  lcd.clear();
+  lcd.print("Cod nou: ");
+  deleteSavedCode = false; //Se șterge codul salvat
+  locked = false; //Se deblochează sistemul
+  createdCode = false;
+}
+
+void alarmaDe6Sec(){ //Functie pentru alarma de 6 secunde
+  lcd.clear();
+  lcd.print("Cod gresit!"); 
+  delay(2000);
+  lcd.clear();
+  lcd.print("Alarma pornita");
+  lcd.setCursor(0, 1);
+  lcd.print("timp de 6 sec");
+  
+  for(int i = 0; i < 6; i++) //Începe sa sune alarma pe o perioadă de 6 secunde
+  {
+    if(i % 2 == 0){
+      tone(BUZZER_PIN, 1000);
+    }
+    if(i % 2 != 0){
+      tone(BUZZER_PIN, 800);
+    }
+    digitalWrite(LED_PIN, HIGH);
+    delay(500);
+    noTone(BUZZER_PIN);
+    digitalWrite(LED_PIN, LOW);
+    delay(500);
+  }
+  lcd.clear();
+  lcd.print("Deblocare sistem");
+  lcd.setCursor(0, 1);
+}
+
+void alarmaDe10Sec(){ //Functie pentru alarma de 10 secunde
+  lcd.clear();   
+  lcd.print("Alarma pornita");
+  lcd.setCursor(0, 1);
+  lcd.print("timp de 10 sec");
+            
+  for(int i = 0; i < 10; i++) //Începe sa sune alarma pe o perioadă de 10 secunde
+  {
+    if(i % 2 == 0){
+       tone(BUZZER_PIN, 1000);
+    }
+    if(i % 2 != 0){
+       tone(BUZZER_PIN, 800);
+    }
+    digitalWrite(LED_PIN, HIGH);
+    delay(500);
+    noTone(BUZZER_PIN);
+    digitalWrite(LED_PIN, LOW);
+    delay(500);
+  }
+}
+
+void creareCod(char key){ //Functie de creare cod
+  if(key != '#' && key != 'A' && key != '*'){ //Codul nu conține caracterele #, A și *
+        if (length < 16) {
+              code[length] = key;
+              length++;
+              lcd.print('*');
+        }
+        createdCode = true;
+        code[length] = '\0';   
+      }
+}
+
+void apasareTasta(char key){
+  if (key) { //Se verifică daca variabila key nu este goală (dacă tasta este apăsată)
+    if (key == '#' && deleteSavedCode == false && locked == false && createdCode == true) { //valabil dacă tasta este '#', 
+                                                        //acțiunea de ștergere a codului salvat nu exista,
+                                                        //daca sistemul nu este blocat și dacă s-a creat codul 
+      blocareSistem();
+    }
+    
+    else if (key == '*') { //se verifica daca tasta este '*'
+      if(locked == true){ //se verifică dacă sistemul este blocat
+        if(nullSavedCode == false){ //se verifică dacă codul a fost salvat
+          stareDeStergereCod(retypedCode, retypedCodeLength);
+        }
+      }
+    }
+    
+    else if(key == 'A' && deleteSavedCode == false && locked == true) //Dacă tasta este 'A', nu este
+                                                                      //activată ștergerea codului și sistemul este blocat
+    {
+      stareDeDeblocare();
+    }
+    
+    else if(locked == true && deleteSavedCode == false) //daca sistemul este blocat și nu este activată ștergerea codului
+    { 
+      if(key != '*' && key != '#'){ //daca tasta este diferită de '*' și '#'
+        deblocareSistem(key);
+      }
+      
+      if(key == '#'){ //dacă tasta este '#' 
+        
+        bool matchingCodes = true;
+        
+        for(int i = 0; i < length; i++)
+        {
+          if(retypedCode[i] != savedCode[i])
+            matchingCodes = false;
+        }
+        
+        if(matchingCodes == true && retypedCodeLength == savedCodeLength)// se verifică egalitatea codului reintrodus cu codul salvat
+        {
+          while(length > 0) 
+          {
+            length--;
+            code[length] = '\0';
+          }
+          
+          nullSavedCode = false; //codul este salvat
+          lcd.clear();
+          lcd.print("Sistem deblocat!");
+          unlocked = true; //sistemul este deblocat
+          delay(2000);
+          lcd.clear();
+          lcd.print("Introdu codul");
+          lcd.setCursor(0, 1);
+          lcd.print("salvat:");
+          locked = false; //sistemul nu este blocat
+          
+          while(retypedCodeLength > 0) // se ștegre codul reintrodus
+          {
+             retypedCodeLength--;
+             retypedCode[retypedCodeLength] = '\0';
+          }
+        }
+        else // se activează alarma de 6 secunde
+        {
+          
+          while(retypedCodeLength > 0)
+          {
+             retypedCodeLength--;
+             retypedCode[retypedCodeLength] = '\0';
+          }
+          alarmaDe6Sec();
+             
+        }
+      }
+    }
+    
+    else if(deleteSavedCode == true){ //se verifică dacă este activată ștergerea codului
+      if(key != '*' && key != '#'){
+        
+        if(key == 'A' && retypedCodeLength == 0){
+         stareDeDeblocare();
+         deleteSavedCode = false;
+         locked = true; 
+        }
+        
+        if(retypedCodeLength < 16 && key != 'A'){
+          introducereCodPentruStergere(key);
+        }
+      }
+      
+      if(key == '#'){
+       
+        bool matchingCodes = true;
+        
+        for(int i = 0; i < length; i++)
+        {
+          if(retypedCode[i] != code[i])
+            matchingCodes = false;
+        }
+        
+        if(matchingCodes == true && length == retypedCodeLength) //se verifică egalitatea codului introdus cu codul salvat
+        {
+          stergereCod();
+          
+          while(retypedCodeLength > 0)
+          {
+             retypedCodeLength--;
+             retypedCode[retypedCodeLength] = '\0';
+          }
+        }
+        else
+        {
+            while(retypedCodeLength > 0)
+            {
+              retypedCodeLength--;
+              retypedCode[retypedCodeLength] = '\0';
+            }
+            
+            lcd.clear();
+            lcd.print("Cod gresit");
+            lcd.setCursor(0, 1);
+            lcd.print("la stergere!");
+            delay(2000);
+            lcd.clear();
+            lcd.print("Stergere cod!");
+        }
+      }
+      
+    }
+    
+    else {
+      //Se creează codului
+      creareCod(key);
+    }
+  } 
+}
