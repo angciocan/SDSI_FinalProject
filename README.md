@@ -4,6 +4,8 @@ Se realizează un sistem arduino care are ca scop protejarea unei zone. Sistemul
 
 Arhitectura hardware este prezentată mai jos:
 
+![Image](https://github.com/user-attachments/assets/5c82d746-cf45-461f-978c-398ede896d20)
+
 
 
 
